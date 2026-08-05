@@ -1748,15 +1748,35 @@ class RenderEditable extends RenderBox
       final Offset start = Offset(0.0, preferredLineHeight) + caretOffset + paintOffset;
       return <TextSelectionPoint>[TextSelectionPoint(start, null)];
     } else {
+      // The boxes are ordered by line, and within a line in visual (left to right) order. Visual
+      // order is logical order only when the line's base direction is left to right: on a right
+      // to left line the logically first box is the visually last one. Taking boxes.first and
+      // boxes.last positionally therefore picks the wrong boxes whenever a line produces more
+      // than one box, which puts both endpoints on the inner edges of the selection instead of
+      // its outer edges.
+      //
+      // The selection's logical start is always on the first line and its logical end on the
+      // last line, so only the choice *within* those two lines depends on the direction.
+      int firstLineEnd = 0;
+      while (firstLineEnd + 1 < boxes.length && boxes[firstLineEnd + 1].top == boxes.first.top) {
+        firstLineEnd += 1;
+      }
+      int lastLineStart = boxes.length - 1;
+      while (lastLineStart > 0 && boxes[lastLineStart - 1].top == boxes.last.top) {
+        lastLineStart -= 1;
+      }
+      final bool isRtl = textDirection == TextDirection.rtl;
+      final ui.TextBox startBox = isRtl ? boxes[firstLineEnd] : boxes.first;
+      final ui.TextBox endBox = isRtl ? boxes[lastLineStart] : boxes.last;
+
       final Offset start =
-          Offset(clampDouble(boxes.first.start, 0, _textPainter.size.width), boxes.first.bottom) +
+          Offset(clampDouble(startBox.start, 0, _textPainter.size.width), startBox.bottom) +
           paintOffset;
       final Offset end =
-          Offset(clampDouble(boxes.last.end, 0, _textPainter.size.width), boxes.last.bottom) +
-          paintOffset;
+          Offset(clampDouble(endBox.end, 0, _textPainter.size.width), endBox.bottom) + paintOffset;
       return <TextSelectionPoint>[
-        TextSelectionPoint(start, boxes.first.direction),
-        TextSelectionPoint(end, boxes.last.direction),
+        TextSelectionPoint(start, startBox.direction),
+        TextSelectionPoint(end, endBox.direction),
       ];
     }
   }
