@@ -2150,10 +2150,15 @@ void main() {
       text: 'abc مرحبا',
       selectionBase: 0,
       selectionExtent: 9,
-      expectedStartEndpointDirection: TextDirection.rtl,
-      expectedEndEndpointDirection: TextDirection.ltr,
-      expectedStartHandleType: TextSelectionHandleType.right,
-      expectedEndHandleType: TextSelectionHandleType.right,
+      // Same expectations as the ambient LTR case above. The endpoints bound the same runs in
+      // both, so their directions do not depend on the ambient direction: offset 0 is inside the
+      // English run and offset 9 ends the Arabic one. Verified against a native Android EditText
+      // holding this text with an RTL layout direction and the same selection — it draws both
+      // handles with the text_select_handle_left drawable.
+      expectedStartEndpointDirection: TextDirection.ltr,
+      expectedEndEndpointDirection: TextDirection.rtl,
+      expectedStartHandleType: TextSelectionHandleType.left,
+      expectedEndHandleType: TextSelectionHandleType.left,
     ),
   ];
 
