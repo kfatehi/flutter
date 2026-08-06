@@ -1757,12 +1757,19 @@ class RenderEditable extends RenderBox
       //
       // The selection's logical start is always on the first line and its logical end on the
       // last line, so only the choice *within* those two lines depends on the direction.
+      // Boxes are grouped into lines by vertical overlap rather than by an exact top match.
+      // Under BoxHeightStyle.tight -- what EditableText asks for -- each box is only as tall as
+      // its own run, and a run that falls back to a different font reports a different top on the
+      // very same line. Ordinary text does this: the spaces between words are a separate run from
+      // the words, so their tops differ by a couple of logical pixels. Comparing tops for equality
+      // would end the line after one box and silently degrade to boxes.first/boxes.last.
+      bool sameLine(ui.TextBox a, ui.TextBox b) => a.top < b.bottom && b.top < a.bottom;
       int firstLineEnd = 0;
-      while (firstLineEnd + 1 < boxes.length && boxes[firstLineEnd + 1].top == boxes.first.top) {
+      while (firstLineEnd + 1 < boxes.length && sameLine(boxes[firstLineEnd + 1], boxes.first)) {
         firstLineEnd += 1;
       }
       int lastLineStart = boxes.length - 1;
-      while (lastLineStart > 0 && boxes[lastLineStart - 1].top == boxes.last.top) {
+      while (lastLineStart > 0 && sameLine(boxes[lastLineStart - 1], boxes.last)) {
         lastLineStart -= 1;
       }
       final bool isRtl = textDirection == TextDirection.rtl;
