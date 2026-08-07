@@ -79,6 +79,41 @@ class _StyledRunsController extends TextEditingController {
   }
 }
 
+/// A controller that paints the spaces between its words in a smaller size than the words.
+///
+/// Under [ui.BoxHeightStyle.tight] each selection box is only as tall as its own run, so this
+/// makes one line come back as boxes with differing tops. That is what font fallback does to real
+/// text -- the spaces shape from a different font than the words around them -- and a test with a
+/// single font cannot reproduce it any other way. [_StyledRunsController]'s fontWeight runs share
+/// a top and so never reach that case.
+class _FallbackLikeController extends TextEditingController {
+  _FallbackLikeController({required super.text, required this.spaceOffsets});
+
+  /// The offsets of the two spaces, each one code unit long.
+  final (int, int) spaceOffsets;
+
+  static const TextStyle _spaceStyle = TextStyle(fontSize: 10);
+
+  @override
+  TextSpan buildTextSpan({
+    required BuildContext context,
+    TextStyle? style,
+    required bool withComposing,
+  }) {
+    final (int first, int second) = spaceOffsets;
+    return TextSpan(
+      style: style,
+      children: <InlineSpan>[
+        TextSpan(text: text.substring(0, first)),
+        TextSpan(text: text.substring(first, first + 1), style: _spaceStyle),
+        TextSpan(text: text.substring(first + 1, second)),
+        TextSpan(text: text.substring(second, second + 1), style: _spaceStyle),
+        TextSpan(text: text.substring(second + 1)),
+      ],
+    );
+  }
+}
+
 /// A built handle, tagged so the test can find it again and measure where it was painted.
 class _HandleMarker extends StatelessWidget {
   const _HandleMarker({super.key});
@@ -133,11 +168,14 @@ Future<_Field> _pumpField(
   required (int, int) boundaries,
   required TextDirection direction,
   required TextSelection selection,
+  bool fallbackLikeRuns = false,
+  ui.BoxHeightStyle? selectionHeightStyle,
 }) async {
-  final TextEditingController controller = _StyledRunsController(
-    text: text,
-    boundaries: boundaries,
-  );
+  // When fallbackLikeRuns is set, `boundaries` are the offsets of the two spaces rather than the
+  // offsets the style changes at.
+  final TextEditingController controller = fallbackLikeRuns
+      ? _FallbackLikeController(text: text, spaceOffsets: boundaries)
+      : _StyledRunsController(text: text, boundaries: boundaries);
   final focusNode = FocusNode();
   final controls = _HandleSpyControls();
   addTearDown(controller.dispose);
@@ -159,6 +197,7 @@ Future<_Field> _pumpField(
               selectionControls: controls,
               showSelectionHandles: true,
               selectAllOnFocus: false,
+              selectionHeightStyle: selectionHeightStyle,
             ),
           ),
         ),
@@ -327,5 +366,96 @@ void main() {
 
     expect(_handleX(tester, field, 0), closeTo(_caretX(tester, selection.baseOffset), 2));
     expect(_handleX(tester, field, 1), closeTo(_caretX(tester, selection.extentOffset), 2));
+  });
+
+  group('a line whose boxes report differing tops', () {
+    // Everything above splits the line with fontWeight, and those runs share a top. Grouping the
+    // boxes of a line by an exact top match therefore passes every test above while being wrong
+    // in a real field, where BoxHeightStyle.tight plus font fallback makes the spaces between
+    // words report a different top from the words.
+    //
+    // This is reachable through the public widget API: EditableText's own default was
+    // BoxHeightStyle.tight through Flutter 3.24, and TextField.selectionHeightStyle still exposes
+    // it on any version.
+    const selection = TextSelection(baseOffset: 2, extentOffset: 12);
+    const spaces = (4, 10); // the two spaces in _rtlText
+
+    testWidgets('setup guard: the tops really do differ, on one line', (WidgetTester tester) async {
+      final _Field field = await _pumpField(
+        tester,
+        text: _rtlText,
+        boundaries: spaces,
+        direction: TextDirection.rtl,
+        selection: selection,
+        fallbackLikeRuns: true,
+        selectionHeightStyle: ui.BoxHeightStyle.tight,
+      );
+
+      final List<ui.TextBox> boxes = findRenderEditable(tester).getBoxesForSelection(selection);
+      expect(boxes.length, greaterThan(1), reason: 'the selection must span several boxes');
+      expect(
+        boxes.every(
+          (ui.TextBox box) => box.top < boxes.first.bottom && boxes.first.top < box.bottom,
+        ),
+        isTrue,
+        reason: 'all boxes must be on ONE line; multi-line is a different code path',
+      );
+      expect(
+        boxes.any((ui.TextBox box) => box.top != boxes.first.top),
+        isTrue,
+        reason: 'the boxes must NOT all share a top, or this group tests nothing',
+      );
+      expect(field.controls.builtKeys.length, 2, reason: 'both handles must be built');
+    });
+
+    testWidgets('each RTL handle is still painted at the caret for the offset it drags', (
+      WidgetTester tester,
+    ) async {
+      final _Field field = await _pumpField(
+        tester,
+        text: _rtlText,
+        boundaries: spaces,
+        direction: TextDirection.rtl,
+        selection: selection,
+        fallbackLikeRuns: true,
+        selectionHeightStyle: ui.BoxHeightStyle.tight,
+      );
+
+      expect(
+        _handleX(tester, field, 0),
+        closeTo(_caretX(tester, selection.baseOffset), 2),
+        reason: 'the handle that drags base must be painted at the caret for base',
+      );
+      expect(
+        _handleX(tester, field, 1),
+        closeTo(_caretX(tester, selection.extentOffset), 2),
+        reason: 'the handle that drags extent must be painted at the caret for extent',
+      );
+      expect(
+        _handleX(tester, field, 1),
+        lessThan(_handleX(tester, field, 0)),
+        reason: 'in RTL the extent is the left-hand end, so its handle is the left one',
+      );
+    });
+
+    testWidgets('control: LTR is unaffected by the tops differing', (WidgetTester tester) async {
+      // _ltrText is shorter than _rtlText, so this needs its own selection.
+      const ltrSelection = TextSelection(baseOffset: 2, extentOffset: 10);
+      final _Field field = await _pumpField(
+        tester,
+        text: _ltrText,
+        boundaries: (3, 7), // the two spaces in _ltrText
+        direction: TextDirection.ltr,
+        selection: ltrSelection,
+        fallbackLikeRuns: true,
+        selectionHeightStyle: ui.BoxHeightStyle.tight,
+      );
+
+      final List<ui.TextBox> boxes = findRenderEditable(tester).getBoxesForSelection(ltrSelection);
+      expect(boxes.any((ui.TextBox box) => box.top != boxes.first.top), isTrue);
+
+      expect(_handleX(tester, field, 0), closeTo(_caretX(tester, ltrSelection.baseOffset), 2));
+      expect(_handleX(tester, field, 1), closeTo(_caretX(tester, ltrSelection.extentOffset), 2));
+    });
   });
 }

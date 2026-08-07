@@ -2,6 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+import 'dart:ui' as ui;
+
 import 'package:flutter/widgets.dart';
 
 /// A minimal wrapper around [EditableText] for use in widget tests.
@@ -42,6 +44,7 @@ class TestTextField extends StatefulWidget {
     this.onSubmitted,
     this.showSelectionHandles = false,
     this.selectAllOnFocus,
+    this.selectionHeightStyle,
   });
 
   final Iterable<String>? autofillHints;
@@ -65,6 +68,11 @@ class TestTextField extends StatefulWidget {
   ///
   /// When null, [EditableText] platform defaults apply.
   final bool? selectAllOnFocus;
+
+  /// Passed straight through to [EditableText.selectionHeightStyle].
+  ///
+  /// When null, [EditableText.defaultSelectionHeightStyle] applies.
+  final ui.BoxHeightStyle? selectionHeightStyle;
 
   @override
   State<TestTextField> createState() => _TestTextFieldState();
@@ -134,6 +142,7 @@ class _TestTextFieldState extends State<TestTextField>
           controller: _effectiveController, // required by editable text.
           showSelectionHandles: widget.showSelectionHandles,
           selectAllOnFocus: widget.selectAllOnFocus,
+          selectionHeightStyle: widget.selectionHeightStyle,
         ),
       ),
     );

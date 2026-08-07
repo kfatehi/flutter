@@ -20,12 +20,19 @@
 //
 // Everything here uses the test font: the several boxes come from differing style runs, not from
 // shaping, so no font asset is required.
+//
+// The last group covers a line whose boxes do not all report the same top. Grouping boxes into
+// lines by an exact top match looks safe and is not: under BoxHeightStyle.tight each box is only
+// as tall as its own run, so runs of differing metrics on one line report differing tops. In a
+// real field the runs come from font fallback -- the spaces between words shape from a different
+// font than the words -- which no test with a single font can produce. Differing fontSize gives
+// the same geometry from the test font. Note that differing fontWeight, which is what the rest of
+// this file uses, does NOT: those runs share a top, which is why nothing here caught it.
 
 import 'dart:math' as math;
 import 'dart:ui' as ui;
 
 import 'package:flutter/rendering.dart';
-import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -75,9 +82,39 @@ const TextSpan _multiRunRtlSpan = TextSpan(
 const int _fullLength = 13; // _run1.length + _run2.length + _run3.length
 const TextSelection _fullSelection = TextSelection(baseOffset: 0, extentOffset: _fullLength);
 
+// The same three words, but with the spaces between them in a smaller size. Under
+// BoxHeightStyle.tight a box is only as tall as its own run, so the spaces report a different top
+// from the words on the same line -- which is what font fallback does to real text.
+const TextSpan _mixedMetricsRtlSpan = TextSpan(
+  style: TextStyle(fontSize: 16),
+  children: <InlineSpan>[
+    TextSpan(text: 'خانه'),
+    TextSpan(text: ' ', style: TextStyle(fontSize: 12)),
+    TextSpan(text: 'نشسته'),
+    TextSpan(text: ' ', style: TextStyle(fontSize: 12)),
+    TextSpan(text: 'ام'),
+  ],
+);
+
+const TextSpan _mixedMetricsLtrSpan = TextSpan(
+  style: TextStyle(fontSize: 16),
+  children: <InlineSpan>[
+    TextSpan(text: 'onee'),
+    TextSpan(text: ' ', style: TextStyle(fontSize: 12)),
+    TextSpan(text: 'twoxy'),
+    TextSpan(text: ' ', style: TextStyle(fontSize: 12)),
+    TextSpan(text: 'si'),
+  ],
+);
+
 const double _viewportWidth = 500;
 
-RenderEditable _editable(TextSpan text, TextSelection selection, TextDirection direction) {
+RenderEditable _editable(
+  TextSpan text,
+  TextSelection selection,
+  TextDirection direction, {
+  ui.BoxHeightStyle heightStyle = ui.BoxHeightStyle.max,
+}) {
   return RenderEditable(
     text: text,
     textDirection: direction,
@@ -86,11 +123,17 @@ RenderEditable _editable(TextSpan text, TextSelection selection, TextDirection d
     offset: ViewportOffset.zero(),
     textSelectionDelegate: _FakeEditableTextState(),
     selection: selection,
+    selectionHeightStyle: heightStyle,
   );
 }
 
-RenderEditable _laidOut(TextSpan text, TextSelection selection, TextDirection direction) {
-  final RenderEditable editable = _editable(text, selection, direction);
+RenderEditable _laidOut(
+  TextSpan text,
+  TextSelection selection,
+  TextDirection direction, {
+  ui.BoxHeightStyle heightStyle = ui.BoxHeightStyle.max,
+}) {
+  final RenderEditable editable = _editable(text, selection, direction, heightStyle: heightStyle);
   layout(editable, constraints: const BoxConstraints(maxWidth: _viewportWidth));
   return editable;
 }
@@ -190,7 +233,7 @@ void main() {
   test('control: a single-box RTL selection already has correct endpoints', () {
     // Selecting within one style run yields one box, and today's code gets that right. This is
     // why the defect stays invisible until the selection crosses a run boundary.
-    const TextSelection selection = TextSelection(baseOffset: 0, extentOffset: 4);
+    const selection = TextSelection(baseOffset: 0, extentOffset: 4);
     final RenderEditable editable = _laidOut(_multiRunRtlSpan, selection, TextDirection.rtl);
 
     final List<ui.TextBox> boxes = editable.getBoxesForSelection(selection);
@@ -202,7 +245,7 @@ void main() {
   });
 
   test('control: an LTR multi-box selection has correct endpoints', () {
-    const TextSpan ltrSpan = TextSpan(
+    const ltrSpan = TextSpan(
       style: TextStyle(fontSize: 16),
       children: <InlineSpan>[
         TextSpan(text: 'one ', style: TextStyle(fontWeight: FontWeight.w400)),
@@ -210,7 +253,7 @@ void main() {
         TextSpan(text: 'six', style: TextStyle(fontWeight: FontWeight.w400)),
       ],
     );
-    const TextSelection selection = TextSelection(baseOffset: 0, extentOffset: 11);
+    const selection = TextSelection(baseOffset: 0, extentOffset: 11);
     final RenderEditable editable = _laidOut(ltrSpan, selection, TextDirection.ltr);
 
     final List<ui.TextBox> boxes = editable.getBoxesForSelection(selection);
@@ -220,5 +263,99 @@ void main() {
     // For LTR visual and logical order agree, so the existing code is correct.
     expect(endpoints.first.point.dx, _leftmost(boxes));
     expect(endpoints.last.point.dx, _rightmost(boxes));
+  });
+
+  group('one line whose boxes report differing tops', () {
+    test('setup guard: BoxHeightStyle.tight + differing metrics splits the tops', () {
+      final RenderEditable editable = _laidOut(
+        _mixedMetricsRtlSpan,
+        _fullSelection,
+        TextDirection.rtl,
+        heightStyle: ui.BoxHeightStyle.tight,
+      );
+      final List<ui.TextBox> boxes = editable.getBoxesForSelection(_fullSelection);
+
+      expect(boxes.length, greaterThan(1), reason: 'the selection must span several boxes');
+      // Still one line: every box overlaps the first vertically. This is deliberately not a top
+      // comparison, because the whole point of the group is that the tops differ.
+      expect(
+        boxes.every(
+          (ui.TextBox box) => box.top < boxes.first.bottom && boxes.first.top < box.bottom,
+        ),
+        isTrue,
+        reason: 'all boxes must be on ONE line; multi-line selection is a different code path',
+      );
+      expect(
+        boxes.any((ui.TextBox box) => box.top != boxes.first.top),
+        isTrue,
+        reason: 'the boxes must NOT all share a top, or this group tests nothing',
+      );
+    });
+
+    test('setup guard: differing fontWeight alone does NOT split the tops', () {
+      // The rest of this file builds its multi-box line out of fontWeight runs. Those share a top
+      // even under BoxHeightStyle.tight, so they cannot exercise the line grouping. Recording that
+      // here keeps the coverage from being quietly removed.
+      final RenderEditable editable = _laidOut(
+        _multiRunRtlSpan,
+        _fullSelection,
+        TextDirection.rtl,
+        heightStyle: ui.BoxHeightStyle.tight,
+      );
+      final List<ui.TextBox> boxes = editable.getBoxesForSelection(_fullSelection);
+
+      expect(boxes.length, greaterThan(1));
+      expect(boxes.every((ui.TextBox box) => box.top == boxes.first.top), isTrue);
+    });
+
+    test('each RTL endpoint still sits at the caret for its own offset', () {
+      final RenderEditable editable = _laidOut(
+        _mixedMetricsRtlSpan,
+        _fullSelection,
+        TextDirection.rtl,
+        heightStyle: ui.BoxHeightStyle.tight,
+      );
+      final List<ui.TextBox> boxes = editable.getBoxesForSelection(_fullSelection);
+      final List<TextSelectionPoint> endpoints = editable.getEndpointsForSelection(_fullSelection);
+
+      final Rect baseCaret = editable.getLocalRectForCaret(
+        TextPosition(offset: _fullSelection.baseOffset),
+      );
+      final Rect extentCaret = editable.getLocalRectForCaret(
+        TextPosition(offset: _fullSelection.extentOffset),
+      );
+
+      expect(
+        endpoints.first.point.dx,
+        closeTo(baseCaret.center.dx, 2),
+        reason: 'the start endpoint must coincide with the caret at baseOffset',
+      );
+      expect(
+        endpoints.last.point.dx,
+        closeTo(extentCaret.center.dx, 2),
+        reason: 'the end endpoint must coincide with the caret at extentOffset',
+      );
+      // And they are still the selection's outer edges, not the inner edges of two boxes.
+      expect(endpoints.first.point.dx, _rightmost(boxes));
+      expect(endpoints.last.point.dx, _leftmost(boxes));
+    });
+
+    test('control: LTR is unaffected by the tops differing', () {
+      // Visual and logical order agree in LTR, so boxes.first and boxes.last are already the right
+      // boxes and the line grouping never changes the answer. This must hold whatever the grouping
+      // does, which is what makes it a control.
+      final RenderEditable editable = _laidOut(
+        _mixedMetricsLtrSpan,
+        _fullSelection,
+        TextDirection.ltr,
+        heightStyle: ui.BoxHeightStyle.tight,
+      );
+      final List<ui.TextBox> boxes = editable.getBoxesForSelection(_fullSelection);
+      final List<TextSelectionPoint> endpoints = editable.getEndpointsForSelection(_fullSelection);
+
+      expect(boxes.any((ui.TextBox box) => box.top != boxes.first.top), isTrue);
+      expect(endpoints.first.point.dx, _leftmost(boxes));
+      expect(endpoints.last.point.dx, _rightmost(boxes));
+    });
   });
 }
