@@ -1514,6 +1514,11 @@ class TextPainter {
     return boxes.single.toRect().height;
   }
 
+  // Space and tab. Deliberately not a general Unicode whitespace test: this exists only to detect
+  // the trailing whitespace that hangs outside a line box, and a line terminator is handled by
+  // _isNewlineAtOffset.
+  static bool _isHorizontalWhitespace(int codeUnit) => codeUnit == 0x20 || codeUnit == 0x09;
+
   bool _isNewlineAtOffset(int offset) =>
       0 <= offset &&
       offset < plainText.length &&
@@ -1588,6 +1593,24 @@ class TextPainter {
         (offset, true),
       TextPosition(:final int offset, affinity: TextAffinity.upstream) => (offset - 1, false),
     };
+
+    // A line terminator has no visual extent, and the box the engine reports for it is not
+    // reliably positioned. On a right-to-left line that ends in trailing whitespace it comes back
+    // a fixed 0.75em to the left of the line's content, which drags the caret out with it: the
+    // trailing space then measures 1.028em instead of the font's 0.278em, so it looks like a tab
+    // until another character is typed. Anchor to the trailing edge of the preceding grapheme
+    // instead. On a well-behaved line that is the same position, so left-to-right is unaffected.
+    // Only when the line actually ends in trailing whitespace: that is the case the engine gets
+    // wrong, because the whitespace hangs outside the line box and the terminator is then placed
+    // relative to nothing. Without trailing whitespace the terminator sits at the line's edge and
+    // is already correct, so it is left alone.
+    if (anchorToLeadingEdge &&
+        _isNewlineAtOffset(offset) &&
+        offset > 0 &&
+        !_isNewlineAtOffset(offset - 1) &&
+        _isHorizontalWhitespace(plainText.codeUnitAt(offset - 1))) {
+      return _computeCaretMetrics(TextPosition(offset: offset, affinity: TextAffinity.upstream));
+    }
 
     final int caretPositionCacheKey = anchorToLeadingEdge ? offset : -offset - 1;
     if (caretPositionCacheKey == cachedLayout._previousCaretPositionKey) {
