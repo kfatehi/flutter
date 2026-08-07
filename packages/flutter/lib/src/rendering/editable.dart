@@ -1756,25 +1756,53 @@ class RenderEditable extends RenderBox
       // its outer edges.
       //
       // The selection's logical start is always on the first line and its logical end on the
-      // last line, so only the choice *within* those two lines depends on the direction.
-      // Boxes are grouped into lines by vertical overlap rather than by an exact top match.
-      // Under BoxHeightStyle.tight -- what EditableText asks for -- each box is only as tall as
-      // its own run, and a run that falls back to a different font reports a different top on the
-      // very same line. Ordinary text does this: the spaces between words are a separate run from
-      // the words, so their tops differ by a couple of logical pixels. Comparing tops for equality
-      // would end the line after one box and silently degrade to boxes.first/boxes.last.
-      bool sameLine(ui.TextBox a, ui.TextBox b) => a.top < b.bottom && b.top < a.bottom;
-      int firstLineEnd = 0;
-      while (firstLineEnd + 1 < boxes.length && sameLine(boxes[firstLineEnd + 1], boxes.first)) {
-        firstLineEnd += 1;
-      }
-      int lastLineStart = boxes.length - 1;
-      while (lastLineStart > 0 && sameLine(boxes[lastLineStart - 1], boxes.last)) {
-        lastLineStart -= 1;
-      }
+      // last line, so only the choice *within* those two lines depends on the direction, and
+      // only a right to left line needs the boxes of its line identified at all.
+      //
+      // A box cannot be assigned to a line by comparing it with its neighbours. Under
+      // BoxHeightStyle.tight -- what EditableText asks for -- each box is only as tall as its own
+      // run, so two boxes on one line disagree about both their top and their height whenever
+      // they shape from different fonts. Ordinary text does this: the spaces between words are a
+      // separate run from the words. Comparing tops for equality ends the line after one box and
+      // silently degrades to boxes.first/boxes.last, and comparing them for vertical overlap
+      // merges two lines into one, because a box is not confined to its own line: EditableText
+      // forces the strut to the primary font's height, so a run that falls back to a taller font
+      // produces a box that reaches past the line advance and into the next line's band.
+      //
+      // The paragraph already knows where each line is. A box belongs to the line whose vertical
+      // band contains the box's centre, which is inside its own line however far the box's edges
+      // reach beyond it.
       final bool isRtl = textDirection == TextDirection.rtl;
-      final ui.TextBox startBox = isRtl ? boxes[firstLineEnd] : boxes.first;
-      final ui.TextBox endBox = isRtl ? boxes[lastLineStart] : boxes.last;
+      final ui.TextBox startBox;
+      final ui.TextBox endBox;
+      if (isRtl) {
+        final List<ui.LineMetrics> lines = _textPainter.computeLineMetrics();
+        int lineOf(ui.TextBox box) {
+          final double centerY = (box.top + box.bottom) / 2.0;
+          for (var line = 0; line < lines.length; line += 1) {
+            if (centerY < lines[line].baseline + lines[line].descent) {
+              return line;
+            }
+          }
+          return lines.length - 1;
+        }
+
+        final int firstLine = lineOf(boxes.first);
+        var firstLineEnd = 0;
+        while (firstLineEnd + 1 < boxes.length && lineOf(boxes[firstLineEnd + 1]) == firstLine) {
+          firstLineEnd += 1;
+        }
+        final int lastLine = lineOf(boxes.last);
+        int lastLineStart = boxes.length - 1;
+        while (lastLineStart > 0 && lineOf(boxes[lastLineStart - 1]) == lastLine) {
+          lastLineStart -= 1;
+        }
+        startBox = boxes[firstLineEnd];
+        endBox = boxes[lastLineStart];
+      } else {
+        startBox = boxes.first;
+        endBox = boxes.last;
+      }
 
       final Offset start =
           Offset(clampDouble(startBox.start, 0, _textPainter.size.width), startBox.bottom) +
