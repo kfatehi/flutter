@@ -1772,7 +1772,7 @@ class RenderEditable extends RenderBox
       // The paragraph already knows where each line is. A box belongs to the line whose vertical
       // band contains the box's centre, which is inside its own line however far the box's edges
       // reach beyond it.
-      final bool isRtl = textDirection == TextDirection.rtl;
+      final isRtl = textDirection == TextDirection.rtl;
       final ui.TextBox startBox;
       final ui.TextBox endBox;
       if (isRtl) {
