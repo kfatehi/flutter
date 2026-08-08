@@ -1797,7 +1797,26 @@ class RenderEditable extends RenderBox
         while (lastLineStart > 0 && lineOf(boxes[lastLineStart - 1]) == lastLine) {
           lastLineStart -= 1;
         }
-        startBox = boxes[firstLineEnd];
+
+        // Within the first line the box that holds the logical start is the visually
+        // rightmost one, and where it sits in the list is not a safe way to find it. The
+        // engine emits boxes that are not part of the line's left to right walk and puts
+        // them after the line's real boxes: a BoxWidthStyle.max line fill, for a
+        // selection that does not reach the line's logical end, and a separated trailing
+        // space box on a line that ends in a hard break. Neither reaches further right
+        // than the box it was derived from, so the greatest `right` is the box the walk
+        // would have ended on when there are none.
+        var startIndex = 0;
+        for (var box = 1; box <= firstLineEnd; box += 1) {
+          if (boxes[box].right > boxes[startIndex].right) {
+            startIndex = box;
+          }
+        }
+        startBox = boxes[startIndex];
+        // The end endpoint keeps the first box of the last line. The mirror rule, the
+        // smallest `left`, is not the right one: a BoxWidthStyle.max fill runs all the
+        // way to x = 0, which would move the end endpoint to the edge of the paragraph.
+        // Since the extra boxes are appended, a line's FIRST box is always a real one.
         endBox = boxes[lastLineStart];
       } else {
         startBox = boxes.first;
